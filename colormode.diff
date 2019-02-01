@@ -1,0 +1,1352 @@
+From 20cafdd17a4f0f873a2ce5a3e4dce5d30d36cd24 Mon Sep 17 00:00:00 2001
+From: yunbo <yunbo@wind-mobi.com>
+Date: Mon, 22 Oct 2018 10:10:10 +0800
+Subject: [PATCH] Subject: [Project P100][FeatureID colormode][Module Settings&nightdisplayservice][色彩模式需求实现] Ripple Effect: [修改屏幕色温]
+
+Change-Id: I64c24d95312ed86051818c17c69fa67f363fbfb8
+---
+
+diff --git a/custom_files/frameworks/base/core/java/com/android/internal/app/NightDisplayController.java b/custom_files/frameworks/base/core/java/com/android/internal/app/NightDisplayController.java
+old mode 100644
+new mode 100755
+index e0e15c8..56b8f22
+--- a/custom_files/frameworks/base/core/java/com/android/internal/app/NightDisplayController.java
++++ b/custom_files/frameworks/base/core/java/com/android/internal/app/NightDisplayController.java
+@@ -28,6 +28,10 @@
+ import android.os.SystemProperties;
+ import android.provider.Settings.Secure;
+ import android.provider.Settings.System;
++//yunbo@wind-mobi.com 2018/9/14 start
++import android.util.Log;
++import android.graphics.Color;
++//yunbo@wind-mobi.com 2018/9/14 end
+ import android.util.Slog;
+ 
+ import com.android.internal.R;
+@@ -51,6 +55,10 @@
+ 
+     private static final String TAG = "NightDisplayController";
+     private static final boolean DEBUG = false;
++
++    //yunbo@wind-mobi.com 2018/9/14 start
++    public static final String SCREEN_COLOR_TEMPERATURE_ARGB = "screen_color_temperature_argb";
++    //yunbo@wind-mobi.com 2018/9/14 end
+ 
+     @Retention(RetentionPolicy.SOURCE)
+     @IntDef({ AUTO_MODE_DISABLED, AUTO_MODE_CUSTOM, AUTO_MODE_TWILIGHT })
+@@ -367,6 +375,19 @@
+                 mUserId);
+     }
+ 
++    //yunbo@wind-mobi.com 2018/9/12 start
++    public boolean setScreenColorTemperature(int color){
++        return System.putIntForUser(mContext.getContentResolver(),SCREEN_COLOR_TEMPERATURE_ARGB,color,mUserId);
++    }
++
++    public int getScreenColorTemperature(){
++        final int screenColor = System.getIntForUser(mContext.getContentResolver(),
++                SCREEN_COLOR_TEMPERATURE_ARGB, Color.WHITE, mUserId);
++        return screenColor;
++    }
++
++    //yunbo@wind-mobi.com 2018/9/12 end
++
+     /**
+      * Returns the minimum allowed color temperature (in Kelvin) to tint the display when activated.
+      */
+@@ -416,6 +437,10 @@
+                 case System.DISPLAY_COLOR_MODE:
+                     mCallback.onDisplayColorModeChanged(getColorMode());
+                     break;
++                //yunbo@wind-mobi.com 2018/9/12 start
++                case SCREEN_COLOR_TEMPERATURE_ARGB:
++                    mCallback.onScreenColorTemperatureChanged(getScreenColorTemperature());
++                //yunbo@wind-mobi.com 2018/9/12 end
+             }
+         }
+     }
+@@ -446,6 +471,9 @@
+                         false /* notifyForDescendants */, mContentObserver, mUserId);
+                 cr.registerContentObserver(System.getUriFor(System.DISPLAY_COLOR_MODE),
+                         false /* notifyForDecendants */, mContentObserver, mUserId);
++                //yunbo@wind-mobi.com 2018/9/12 start
++                cr.registerContentObserver(System.getUriFor(SCREEN_COLOR_TEMPERATURE_ARGB),false,mContentObserver,mUserId);
++                //yunbo@wind-mobi.com 2018/9/12 end
+             }
+         }
+     }
+@@ -499,5 +527,14 @@
+          * @param displayColorMode the color mode
+          */
+         default void onDisplayColorModeChanged(int displayColorMode) {}
++
++        //yunbo@wind-mobi.com 2018/9/12 start
++        /**
++         * Callback invoked when the screen color argb changes.
++         *
++         * @param color the color argb
++         */
++        default void onScreenColorTemperatureChanged(int color) {}
++        //yunbo@wind-mobi.com 2018/9/12 end
+     }
+ }
+diff --git a/custom_files/frameworks/base/services/core/java/com/android/server/display/NightDisplayService.java b/custom_files/frameworks/base/services/core/java/com/android/server/display/NightDisplayService.java
+old mode 100644
+new mode 100755
+index 4c9bb3b..455bae4
+--- a/custom_files/frameworks/base/services/core/java/com/android/server/display/NightDisplayService.java
++++ b/custom_files/frameworks/base/services/core/java/com/android/server/display/NightDisplayService.java
+@@ -38,6 +38,10 @@
+ import android.provider.Settings.Secure;
+ import android.service.vr.IVrManager;
+ import android.service.vr.IVrStateCallbacks;
++//yunbo@wind-mobi.com 2018/9/13 start
++import android.graphics.Color;
++import android.util.Log;
++//yunbo@wind-mobi.com 2018/9/13 end
+ import android.util.MathUtils;
+ import android.util.Slog;
+ import android.view.animation.AnimationUtils;
+@@ -113,6 +117,12 @@
+     };
+ 
+     private float[] mMatrixNight = new float[16];
++
++    //yunbo@wind-mobi.com 2018/9/13 start
++    private float[] mMatrixScreenColor = new float[16];
++    private boolean mScreenColorActivated;
++    //yunbo@wind-mobi.com 2018/9/13 end
++
+ 
+     private final float[] mColorTempCoefficients = new float[9];
+ 
+@@ -245,8 +255,15 @@
+             onActivated(mController.isActivated());
+         }
+ 
+-        // Transition the screen to the current temperature.
+-        applyTint(false);
++        //yunbo@wind-mobi.com 2018/9/13 start
++        if (!mController.isActivated()){
++            onScreenColorTemperatureChanged(mController.getScreenColorTemperature());
++        }else {
++            // Transition the screen to the current temperature.
++            applyTint(false);
++        }
++        //yunbo@wind-mobi.com 2018/9/13 end
++
+     }
+ 
+     private void tearDown() {
+@@ -276,6 +293,12 @@
+             Slog.i(TAG, activated ? "Turning on night display" : "Turning off night display");
+ 
+             mIsActivated = activated;
++
++            //yunbo@wind-mobi.com 2018/9/13 start
++            if(!mIsActivated){
++                setScreenColorMatrix(mController.getScreenColorTemperature(), mMatrixScreenColor);
++            }
++            //yunbo@wind-mobi.com 2018/9/13 end
+ 
+             if (mAutoMode != null) {
+                 mAutoMode.onActivated(activated);
+@@ -341,6 +364,97 @@
+         }
+     }
+ 
++    //yunbo@wind-mobi.com 2018/9/12 start
++    @Override
++    public void onScreenColorTemperatureChanged(int color) {
++        Log.d(TAG,"onScreenColorTemperatureChanged,color:"+color);
++        mScreenColorActivated = true;
++        setScreenColorMatrix(color, mMatrixScreenColor);
++        applyScreenTint();
++    }
++
++    private void setScreenColorMatrix(int color, float[] outTemp) {
++
++        Matrix.setIdentityM(outTemp, 0);
++
++        //  H(hue):         0~360
++        //  S(saturation):  0~1
++        //  V(value):       0~1
++        //the color need change to hsv[h,s,v]
++        float[] hsv = {0,0,1};
++        Color.colorToHSV(color,hsv);
++
++        // then convert to RGB
++        for(int i=0;i<hsv.length;i++){
++            Log.d(TAG, "viewHSV[ " + i + " ] " + " = " + hsv[i]);
++        }
++        /*int viewColor = Color.HSVToColor(hsv);
++        int a = Color.alpha(viewColor); //0~255
++        int r = Color.red(viewColor);   //0~255
++        int g = Color.green(viewColor); //0~255
++        int b = Color.blue(viewColor);  //0~255
++        Log.d(TAG,"viewColor:" + viewColor +"  R:" + r + "  G:" + g + "  B:" + b);*/
++
++        //  H:  300~0~60        60~180          180~300
++        //      RED             GREEN           BLUE
++        //      0xFFFF0000      0xFF00FF00      0xFF0000FF
++
++        //          R          G           B        HSV
++        //  R   100.0%      74.07%      72.86%      2.592/1.0072,0.2706,1
++        //      255          189        186
++        //  G   79.29%      100.0%      77.33%      114.84/0.957,0.2275,1
++        //      202         255         197
++        //  B   81.97%      86.81%      100%        224.35/0.935,0.1804,1
++        //      209         221         255
++
++        if(hsv[0] > 60 && hsv[0] <= 180){
++            //GREEN
++            hsv[0] *= 0.957;
++            hsv[1] *= 0.2275;
++        }else if(hsv[0] > 180 && hsv[0] <= 300){
++            //BLUE
++            hsv[0] *= 0.935;
++            hsv[1] *= 0.1804;
++        }else {
++            //RED
++            if(hsv[0] == 0){
++                hsv[0] = 360;
++                hsv[0] *= 0.0072;
++            }
++            hsv[0] *= 1.0072;
++            hsv[1] *= 0.2706;
++        }
++
++        int screenColor = Color.HSVToColor(hsv);
++        int sr = Color.red(screenColor);   //0~255
++        int sg = Color.green(screenColor); //0~255
++        int sb = Color.blue(screenColor);  //0~255
++
++        Log.d(TAG,"screenColor-" +"R:" + sr + "  G:" + sg + "  B:" + sb);
++
++        outTemp[0] = sr/255f;//red;
++        outTemp[5] = sg/255f;//green;
++        outTemp[10] = sb/255f;//blue;
++
++        Log.d(TAG, "outTemp[ " + 0 + "]" + " =" + outTemp[0]);
++        Log.d(TAG, "outTemp[ " + 5 + "]" + " =" + outTemp[5]);
++        Log.d(TAG, "outTemp[ " + 10 + "]" + " =" + outTemp[10]);
++
++    }
++
++    private void applyScreenTint(){
++        // Don't do any color matrix change animations if we are ignoring them anyway.
++        if (mIgnoreAllColorMatrixChanges.get()) {
++            return;
++        }
++
++        final DisplayTransformManager dtm = getLocalService(DisplayTransformManager.class);
++        dtm.setColorMatrix(LEVEL_COLOR_MATRIX_NIGHT_DISPLAY, mMatrixScreenColor);
++
++
++    }
++    //yunbo@wind-mobi.com 2018/9/12 end
++
+     private void setCoefficientMatrix(Context context) {
+         final boolean isNative = DisplayTransformManager.isNativeModeEnabled();
+         final String[] coefficients = context.getResources().getStringArray(isNative ?
+@@ -369,7 +483,9 @@
+ 
+         final DisplayTransformManager dtm = getLocalService(DisplayTransformManager.class);
+         final float[] from = dtm.getColorMatrix(LEVEL_COLOR_MATRIX_NIGHT_DISPLAY);
+-        final float[] to = mIsActivated ? mMatrixNight : MATRIX_IDENTITY;
++        //yunbo@wind-mobi.com 2018/9/13 start
++        final float[] to = mIsActivated ? mMatrixNight : mMatrixScreenColor;
++        //yunbo@wind-mobi.com 2018/9/13 end
+ 
+         if (immediate) {
+             dtm.setColorMatrix(LEVEL_COLOR_MATRIX_NIGHT_DISPLAY, to);
+diff --git a/custom_files/packages/apps/Settings/res/drawable/ic_info_outline_24dp.xml b/custom_files/packages/apps/Settings/res/drawable/ic_info_outline_24dp.xml
+new file mode 100755
+index 0000000..5a7f954
+--- /dev/null
++++ b/custom_files/packages/apps/Settings/res/drawable/ic_info_outline_24dp.xml
+@@ -0,0 +1,32 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++     Copyright (C) 2016 The Android Open Source Project
++
++     Licensed under the Apache License, Version 2.0 (the "License");
++     you may not use this file except in compliance with the License.
++     You may obtain a copy of the License at
++
++          http://www.apache.org/licenses/LICENSE-2.0
++
++     Unless required by applicable law or agreed to in writing, software
++     distributed under the License is distributed on an "AS IS" BASIS,
++     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++     See the License for the specific language governing permissions and
++     limitations under the License.
++-->
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++        android:width="24dp"
++        android:height="24dp"
++        android:viewportWidth="24.0"
++        android:viewportHeight="24.0"
++        android:tint="?android:attr/textColorSecondary">
++    <path
++        android:fillColor="#FF000000"
++        android:pathData="M12,17L12,17c0.55,0 1,-0.45 1,-1v-4c0,-0.55 -0.45,-1 -1,-1l0,0c-0.55,0 -1,0.45 -1,1v4C11,16.55 11.45,17 12,17z"/>
++    <path
++        android:fillColor="#FF000000"
++        android:pathData="M12,2c-5.52,0 -10,4.48 -10,10s4.48,10 10,10s10,-4.48 10,-10S17.52,2 12,2zM12,20c-4.41,0 -8,-3.59 -8,-8s3.59,-8 8,-8s8,3.59 8,8S16.41,20 12,20z"/>
++    <path
++        android:fillColor="#FF000000"
++        android:pathData="M12,9.1L12,9.1c0.61,0 1.1,-0.49 1.1,-1.1l0,0c0,-0.61 -0.49,-1.1 -1.1,-1.1l0,0c-0.61,0 -1.1,0.49 -1.1,1.1l0,0C10.9,8.61 11.39,9.1 12,9.1z"/>
++</vector>
+diff --git a/custom_files/packages/apps/Settings/res/layout/screen_color_mode.xml b/custom_files/packages/apps/Settings/res/layout/screen_color_mode.xml
+new file mode 100755
+index 0000000..d820c8b
+--- /dev/null
++++ b/custom_files/packages/apps/Settings/res/layout/screen_color_mode.xml
+@@ -0,0 +1,180 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++  ~
++  ~ Author:   yunbo@wind-mobi.com
++  ~ TIme:      2018.09.15
++  ~
++  -->
++
++<ScrollView
++    xmlns:android="http://schemas.android.com/apk/res/android"
++    xmlns:app="http://schemas.android.com/apk/res-auto"
++    xmlns:tools="http://schemas.android.com/tools"
++    android:gravity="center_horizontal"
++    android:layout_width="match_parent"
++    android:layout_height="match_parent">
++
++    <LinearLayout
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:gravity="center"
++        android:orientation="vertical">
++
++        <RelativeLayout
++            android:layout_width="match_parent"
++            android:layout_height="match_parent"
++            android:layout_marginTop="10dp"
++            android:paddingStart="200dp"
++            android:paddingTop="10dp"
++            android:paddingEnd="150dp"
++            android:paddingBottom="10dp">
++
++            <TextView
++                android:id="@+id/textView_def"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_alignParentStart="true"
++                android:layout_centerVertical="true"
++                android:textColor="@android:color/black"
++                android:text="@string/colormode_def"
++                android:textSize="16sp" />
++
++            <RadioButton
++                android:id="@+id/radiobutton_def"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_alignParentEnd="true" />
++
++            <!--<View
++                android:id="@+id/rule_def"
++                android:layout_width="match_parent"
++                android:layout_height="1dip"
++                android:layout_below="@+id/radiobutton_def"
++                android:background="#55323232" />-->
++        </RelativeLayout>
++
++        <RelativeLayout
++            android:layout_width="match_parent"
++            android:layout_height="match_parent"
++            android:layout_marginTop="10dp"
++            android:paddingStart="200dp"
++            android:paddingTop="10dp"
++            android:paddingEnd="150dp"
++            android:paddingBottom="10dp">
++
++            <TextView
++                android:id="@+id/textView_warm"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_alignParentStart="true"
++                android:layout_centerVertical="true"
++                android:textColor="@android:color/black"
++                android:text="@string/colormode_warm"
++                android:textSize="16sp" />
++
++            <RadioButton
++                android:id="@+id/radiobutton_warm"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_alignParentEnd="true" />
++
++            <!--<View
++                android:id="@+id/rule_warm"
++                android:layout_width="match_parent"
++                android:layout_height="1dip"
++                android:layout_below="@+id/radiobutton_warm"
++                android:background="#55323232" />-->
++        </RelativeLayout>
++
++        <RelativeLayout
++            android:layout_width="match_parent"
++            android:layout_height="match_parent"
++            android:layout_marginTop="10dp"
++            android:paddingStart="200dp"
++            android:paddingTop="10dp"
++            android:paddingEnd="150dp"
++            android:paddingBottom="10dp">
++
++            <TextView
++                android:id="@+id/textView_cold"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_alignParentStart="true"
++                android:layout_centerVertical="true"
++                android:textColor="@android:color/black"
++                android:text="@string/colormode_cold"
++                android:textSize="16sp" />
++
++            <RadioButton
++                android:id="@+id/radiobuton_cold"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_alignParentEnd="true" />
++
++            <!--<View
++                android:id="@+id/rule_cold"
++                android:layout_width="match_parent"
++                android:layout_height="1dip"
++                android:layout_below="@+id/radiobuton_cold"
++                android:background="#55323232" />-->
++        </RelativeLayout>
++
++        <View
++            android:id="@+id/line"
++            android:layout_width="match_parent"
++            android:layout_height="1dip"
++            android:layout_alignParentBottom="true"
++            android:layout_marginStart="100dp"
++            android:layout_marginTop="10dp"
++            android:layout_marginEnd="100dp"
++            android:background="#55323232" />
++
++        <TextView
++            android:id="@+id/textView_description"
++            android:layout_width="match_parent"
++            android:layout_height="wrap_content"
++            android:layout_marginStart="150dp"
++            android:layout_marginTop="10dp"
++            android:layout_marginEnd="150dp"
++            android:drawableLeft="@drawable/ic_info_outline_24dp"
++            android:drawablePadding="26dp"
++            android:text="@string/colormode_description"
++            android:textSize="14sp" />
++
++        <com.android.settings.display.ScreenColorView.ColorPickerView
++            android:id="@+id/colorPicker"
++            android:layout_width="match_parent"
++            android:layout_height="match_parent"
++            android:layout_margin="10dp">
++
++        </com.android.settings.display.ScreenColorView.ColorPickerView>
++
++        <FrameLayout
++            android:layout_width="match_parent"
++            android:layout_height="match_parent">
++
++            <TextView
++                android:id="@+id/editTextDebugHSV"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_gravity="start"
++                android:layout_marginTop="10dp"
++                android:text="HSV"
++                android:textSize="24sp"
++                android:visibility="gone" />
++
++            <TextView
++                android:id="@+id/editTextDebugRGB"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_gravity="end"
++                android:layout_marginTop="10dp"
++                android:text="ARGB"
++                android:textSize="24sp"
++                android:visibility="gone" />
++        </FrameLayout>
++
++        </LinearLayout>
++</ScrollView>
++
++
+diff --git a/custom_files/packages/apps/Settings/res/values-zh-rCN/strings.xml b/custom_files/packages/apps/Settings/res/values-zh-rCN/strings.xml
+index e7c2927..af66c13 100755
+--- a/custom_files/packages/apps/Settings/res/values-zh-rCN/strings.xml
++++ b/custom_files/packages/apps/Settings/res/values-zh-rCN/strings.xml
+@@ -4027,5 +4027,12 @@
+     <string name="dock_alexa_success_msg_error">你离线了。请连接网络后继续！</string>
+     <string name="dock_kid_toast_msg">Alexa无法在儿童模式下使用</string>
+     <!-- chengrui@wind-mobi.com add 2018.07.19 end -->
+-
++    <!--yunbo@wind-mobi.com 20180913 st-->
++    <string name="screen_color_mode_title">色彩模式</string>
++    <string name="colormode_def">默认</string>
++    <string name="colormode_warm">暖色</string>
++    <string name="colormode_cold">冷色</string>
++    <string name="colormode_description">请在色环上点击或拖动圆点，更改色温，选择默认恢复初始状态。</string>
++    <string name="disableScreenColor">护眼模式下不可调节</string>
++    <!--yunbo@wind-mobi.com 20180913 end-->
+ </resources>
+diff --git a/custom_files/packages/apps/Settings/res/values/strings.xml b/custom_files/packages/apps/Settings/res/values/strings.xml
+index 39fb440..6835171 100755
+--- a/custom_files/packages/apps/Settings/res/values/strings.xml
++++ b/custom_files/packages/apps/Settings/res/values/strings.xml
+@@ -9355,4 +9355,12 @@
+     <!-- zhangheting@wind-mobi.com 18.9.10 start-->
+     <string name="nec_legal_information">Legal Information</string>
+     <!-- zhangheting@wind-mobi.com 18.9.10 end-->
++    <!--yunbo@wind-mobi.com 20180913 st-->
++    <string name="screen_color_mode_title">Color mode</string>
++    <string name="colormode_def">Defalut</string>
++    <string name="colormode_warm">Warm</string>
++    <string name="colormode_cold">Cold</string>
++    <string name="colormode_description">Please click or drag the marker on the color ring to change the color temperature of the screen,select default recovery initial state.</string>
++    <string name="disableScreenColor">Can't adjust while eye protection mode is enable</string>
++    <!--yunbo@wind-mobi.com 20180913 end-->
+ </resources>
+diff --git a/custom_files/packages/apps/Settings/res/xml/display_settings.xml b/custom_files/packages/apps/Settings/res/xml/display_settings.xml
+index 5909fed..d7ca883 100755
+--- a/custom_files/packages/apps/Settings/res/xml/display_settings.xml
++++ b/custom_files/packages/apps/Settings/res/xml/display_settings.xml
+@@ -56,6 +56,13 @@
+         android:fragment="com.android.settings.display.NavigationBarPreferenceFragment"/>
+     <!-- jiangyingying@wind-mobi.com 20180419 start-->
+ 
++    <!-- yunbo@wind-mobi.com 20180904 st-->
++    <Preference
++        android:key="screen_color_mode"
++        android:title="@string/screen_color_mode_title"
++        android:fragment="com.android.settings.display.ScreenColorModePreferenceFragment"/>
++    <!-- yunbo@wind-mobi.com 20180904 end-->
++
+ 
+     <com.android.settingslib.RestrictedPreference
+         android:key="wallpaper"
+diff --git a/custom_files/packages/apps/Settings/src/com/android/settings/DisplaySettings.java b/custom_files/packages/apps/Settings/src/com/android/settings/DisplaySettings.java
+index 7224f2d..6241ef1 100755
+--- a/custom_files/packages/apps/Settings/src/com/android/settings/DisplaySettings.java
++++ b/custom_files/packages/apps/Settings/src/com/android/settings/DisplaySettings.java
+@@ -52,6 +52,9 @@
+ //jiangyingying@wind-mobi.com navigationbar 20180418 start
+ import com.android.settings.display.HideNavigationBarPreferenceController;
+ //jiangyingying@wind-mobi.com navigationbar 20180418 end
++//yunbo@wind-mobi.com 2018/10/21 start
++import com.android.settings.display.ScreenColorModePreferenceController;
++//yunbo@wind-mobi.com 2018/10/21 end
+ 
+ public class DisplaySettings extends DashboardFragment {
+     private static final String TAG = "DisplaySettings";
+@@ -123,6 +126,9 @@
+         //jiangyingying@wind-mobi.com navigationbar 20180418 start
+         controllers.add(new HideNavigationBarPreferenceController(context));
+         //jiangyingying@wind-mobi.com navigationbar 20180418 end
++        //yunbo@wind-mobi.com 2018/10/21 start
++        controllers.add(new ScreenColorModePreferenceController(context));
++        //yunbo@wind-mobi.com 2018/10/21 end
+         return controllers;
+     }
+ 
+diff --git a/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorController.java b/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorController.java
+new file mode 100755
+index 0000000..f9f83b3
+--- /dev/null
++++ b/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorController.java
+@@ -0,0 +1,24 @@
++package com.android.settings.display;
++
++/**
++ * Created by yunbo@wind-mobi.com on 2018/9/13.
++ */
++
++public class ScreenColorController {
++
++    public interface Observer {
++
++        void colorChanged(int color);
++    }
++
++
++    public interface Observable {
++
++        void subscribe(Observer observer);
++
++        void unsubscribe(Observer observer);
++
++        int getColor();
++
++    }
++}
+diff --git a/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorManager.java b/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorManager.java
+new file mode 100755
+index 0000000..6338900
+--- /dev/null
++++ b/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorManager.java
+@@ -0,0 +1,52 @@
++package com.android.settings.display;
++
++/**
++ * Created by yunbo@wind-mobi.com on 2018/9/13.
++ */
++
++import java.util.ArrayList;
++import java.util.List;
++
++public class ScreenColorManager implements ScreenColorController.Observable {
++
++    private static ScreenColorManager screenColorManager;
++    private List<ScreenColorController.Observer> listeners = new ArrayList<>();
++    private int color;
++
++    public static ScreenColorManager getInstance(){
++        if (null == screenColorManager){
++            synchronized (ScreenColorManager.class){
++                if (null == screenColorManager){
++                    screenColorManager = new ScreenColorManager();
++                }
++            }
++        }
++        return screenColorManager;
++    }
++
++    @Override
++    public void subscribe(ScreenColorController.Observer observer) {
++        if(observer != null){
++            listeners.add(observer);
++        }
++    }
++
++    @Override
++    public void unsubscribe(ScreenColorController.Observer observer) {
++        if(observer != null){
++            listeners.remove(observer);
++        }
++    }
++
++    @Override
++    public int getColor() {
++        return color;
++    }
++
++    public void notifyObserverColorChanged(int color){
++        this.color = color;
++        for(ScreenColorController.Observer listener : listeners){
++            listener.colorChanged(color);
++        }
++    }
++}
+diff --git a/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorModePreferenceController.java b/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorModePreferenceController.java
+new file mode 100755
+index 0000000..2f685e2
+--- /dev/null
++++ b/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorModePreferenceController.java
+@@ -0,0 +1,53 @@
++package com.android.settings.display;
++
++import android.content.Context;
++import android.content.res.Resources;
++import android.provider.Settings;
++import android.support.v7.preference.Preference;
++import com.android.settings.R;
++
++import com.android.settingslib.core.AbstractPreferenceController;
++import com.android.settings.core.PreferenceControllerMixin;
++
++/**
++ * Created by 1002883 on 2018/9/14.
++ */
++
++public class ScreenColorModePreferenceController extends AbstractPreferenceController implements PreferenceControllerMixin {
++
++    private static final String SCREEN_COLOR_MODE = "screen_color_mode";
++    private String summaryStr = null;
++    final Resources res = mContext.getResources();
++
++    public ScreenColorModePreferenceController(Context context) {
++        super(context);
++    }
++
++    @Override
++    public void updateState(Preference preference) {
++        final int eyeProtectionMode = Settings.Secure.getInt(mContext.getContentResolver(),
++                Settings.Secure.NIGHT_DISPLAY_ACTIVATED, 0);
++
++        if(eyeProtectionMode == 1){
++            summaryStr = res.getString(R.string.disableScreenColor);
++            preference.setEnabled(false);
++        }else {
++            summaryStr = null;
++            preference.setEnabled(true);
++        }
++        preference.setSummary(summaryStr);
++
++    }
++
++    @Override
++    public boolean isAvailable() {
++        return true;
++    }
++
++    @Override
++    public String getPreferenceKey() {
++        return SCREEN_COLOR_MODE;
++    }
++
++
++}
+diff --git a/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorModePreferenceFragment.java b/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorModePreferenceFragment.java
+new file mode 100755
+index 0000000..8621923
+--- /dev/null
++++ b/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorModePreferenceFragment.java
+@@ -0,0 +1,298 @@
++package com.android.settings.display;
++
++import com.android.internal.app.NightDisplayController;
++
++import android.app.Fragment;
++import android.content.Context;
++import android.os.Bundle;
++import android.support.v7.preference.PreferenceScreen;
++import android.text.method.ScrollingMovementMethod;
++import android.util.Log;
++import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
++import com.android.settings.R;
++import com.android.settings.display.ScreenColorView.ColorPickerView;
++
++import android.content.Context;
++import android.graphics.Color;
++import android.widget.RadioButton;
++import android.widget.RadioGroup;
++import android.widget.TextView;
++
++import android.view.LayoutInflater;
++import android.view.View;
++import android.view.ViewGroup;
++
++import java.text.DecimalFormat;
++import java.text.NumberFormat;
++import java.util.Locale;
++
++
++/**
++ * Created by yunbo on 2018/9/4.
++ */
++
++
++public class ScreenColorModePreferenceFragment extends Fragment implements ScreenColorController.Observer ,NightDisplayController.Callback ,View.OnClickListener{
++
++    private String TAG = "ScreenColorModeActivity";
++    private NightDisplayController mController;
++
++    private final int defColor = Color.WHITE; //
++    private final int warmColor = 0xFFFFFF4C; //YELLOW s*0.7
++    private final int coldColor = 0xFF7676FF; //BLUE s*0.7
++
++    private boolean DEBUG = false;
++    private int debugCount = 0 ;
++
++    private static Context mContext;
++
++    private ColorPickerView colorPickerView;
++    private RadioButton defRadioButton = null;
++    private RadioButton warmRadioButton = null;
++    private RadioButton coldRadioButon = null;
++    private TextView editTextDebugRGB = null;
++    private TextView editTextDebugHSV = null;
++    private TextView textViewDsecription = null;
++
++    @Override
++    public void onAttach(Context context) {
++        super.onAttach(context);
++        //Log.d(TAG,"onAttach");
++        mContext = context;
++    }
++
++    @Override
++    public void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        //Log.d(TAG,"onCreate");
++        mController = new NightDisplayController(mContext);
++    }
++
++    @Override
++    public void onResume() {
++        super.onResume();
++        //Log.d(TAG,"onResume");
++        //初始化颜色
++        syncColor(getScreenColor());
++    }
++
++    @Override
++    public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
++        //Log.d(TAG,"onCreateView");
++        View fragment = inflater.inflate(R.layout.screen_color_mode,null);
++        return fragment;
++    }
++
++    @Override
++    public void onViewCreated(View view, Bundle savedInstanceState) {
++        colorPickerView = new ColorPickerView(mContext);
++        colorPickerView = (ColorPickerView)view.findViewById(R.id.colorPicker);
++
++        defRadioButton = (RadioButton)view.findViewById(R.id.radiobutton_def);
++        warmRadioButton = (RadioButton)view.findViewById(R.id.radiobutton_warm);
++        coldRadioButon = (RadioButton)view.findViewById(R.id.radiobuton_cold);
++        defRadioButton.setOnClickListener(this);
++        warmRadioButton.setOnClickListener(this);
++        coldRadioButon.setOnClickListener(this);
++
++        editTextDebugRGB = (TextView)view.findViewById(R.id.editTextDebugRGB);
++        editTextDebugHSV = (TextView)view.findViewById(R.id.editTextDebugHSV);
++
++        textViewDsecription = (TextView)view.findViewById(R.id.textView_description);
++        textViewDsecription.setOnClickListener(this);
++    }
++
++    @Override
++    public void onStart() {
++        super.onStart();
++        Log.d(TAG,"onStart");
++        //注册观察
++        ScreenColorManager.getInstance().subscribe(this);
++    }
++
++
++    @Override
++    public void onDestroy() {
++        super.onDestroy();
++        ScreenColorManager.getInstance().unsubscribe(this);
++    }
++
++    //colorWheelView更新颜色
++    @Override
++    public void colorChanged(int color) {
++        //Log.d(TAG,"colorChanged,color:" + color);
++        syncColor(color);
++    }
++
++    //同步颜色到wheelView，radiobutton，framework
++    private void syncColor(int color){
++        //Log.d(TAG,"syncColor");
++
++        //wheelView
++        colorPickerView.setColor(color);
++
++        //radiobutton
++        checkRadioButton(color);
++
++        //framework
++        applyScreenColor(color);
++
++        if(DEBUG){
++            editTextDebugRGB.setVisibility(DEBUG? View.VISIBLE : View.GONE);
++            editTextDebugHSV.setVisibility(DEBUG? View.VISIBLE : View.GONE);
++            //debugTextRGB
++            editTextDebugRGB.setText(screenColor(color));
++
++            //debugTextHSV
++            editTextDebugHSV.setText(colorHSV(color));
++        }
++
++    }
++
++    //设置radiobutton状态
++    private void checkRadioButton(int color) {
++        switch (color){
++            case defColor:
++                defRadioButton.setChecked(true);
++                warmRadioButton.setChecked(false);
++                coldRadioButon.setChecked(false);
++                break;
++            case warmColor:
++                defRadioButton.setChecked(false);
++                warmRadioButton.setChecked(true);
++                coldRadioButon.setChecked(false);
++                break;
++            case coldColor:
++                defRadioButton.setChecked(false);
++                warmRadioButton.setChecked(false);
++                coldRadioButon.setChecked(true);
++                break;
++            default:
++                defRadioButton.setChecked(false);
++                warmRadioButton.setChecked(false);
++                coldRadioButon.setChecked(false);
++                break;
++        }
++    }
++
++    private String colorHex(int color) {
++        int a = Color.alpha(color); //0~255
++        int r = Color.red(color);   //0~255
++        int g = Color.green(color); //0~255
++        int b = Color.blue(color);  //0~255
++        Log.d(TAG,"viewColor,R:" + r +" G:" + g + " B:" + b);
++        //return String.format(Locale.getDefault(), "0x%02X%02X%02X%02X", a, r, g, b);
++
++        Log.d(TAG,"colorHex:"+" R:" + r + " G:" + g + " B:" + b);
++        return "viewColor,r" + r +" g:" + g + " b:" + b;
++    }
++
++    private String colorHSV(int color) {
++        String colorHSV = "";
++        float[] hsv = {0,0,1};
++        Color.colorToHSV(color,hsv);
++        /*for (float f : hsv){
++            colorHSV += f + "  ;";
++        }*/
++        return hsv[0]+"";
++    }
++
++    //将圆盘颜色值转为联想预期效果
++    private String screenColor(int color) {
++        /*int a = Color.alpha(color); //0~255
++        int r = Color.red(color);   //0~255
++        int g = Color.green(color); //0~255
++        int b = Color.blue(color);  //0~255*/
++
++        //  H:  300~0~60        60~180          180~300
++        //      RED             GREEN           BLUE
++        //      0xFFFF0000      0xFF00FF00      0xFF0000FF
++
++        //          R          G           B        HSV
++        //  R   100.0%      74.07%      76.79%      353.6/0.98,0.2588,1
++        //      255          189        196
++        //  G   79.29%      100.0%      77.33%      114.8/0.96,0.2275,1
++        //      202         255         197
++        //  B   81.97%      86.81%      100%        224.3/0.93,0.1804,1
++        //      209         221         255
++
++        float[] hsv = {0,0,1};
++        Color.colorToHSV(color,hsv);
++        if(hsv[0] > 60 && hsv[0] <= 180){
++            //GREEN
++            hsv[0] *= 0.957;
++            hsv[1] *= 0.2275;
++        }else if(hsv[0] > 180 && hsv[0] <= 300){
++            //BLUE
++            hsv[0] *= 0.935;
++            hsv[1] *= 0.1804;
++        }else {
++            //RED
++            if(hsv[0] == 0){
++                hsv[0] = 360;
++                hsv[0] *= 0.0072;
++            }
++            hsv[0] *= 1.0072;
++            hsv[1] *= 0.2706;
++        }
++
++        int screenColor = Color.HSVToColor(hsv);
++        int sr = Color.red(screenColor);   //0~255
++        int sg = Color.green(screenColor); //0~255
++        int sb = Color.blue(screenColor);  //0~255
++
++        NumberFormat percentFormat = NumberFormat.getPercentInstance();
++        percentFormat.setMaximumIntegerDigits(2);
++        percentFormat.setMinimumFractionDigits(2);
++
++        //Log.d(TAG,"screenColor,r" + sr +" g:" + sg + " b:" + sb);
++        String rgbColor = "R:" + sr +"("+percentFormat.format((double) sr/255)+")"+" G:" + sg +"("+percentFormat.format((double) sg/255)+")"+ " B:" + sb +"("+percentFormat.format((double) sb/255)+")";
++        return rgbColor;
++    }
++
++    private void applyScreenColor(int color) {
++        //conversionColor(color);
++        mController.setScreenColorTemperature(color);
++    }
++
++    private int getScreenColor(){
++        return mController.getScreenColorTemperature();
++    }
++
++    @Override
++    public void onClick(View v) {
++        switch(v.getId()){
++            case R.id.radiobutton_def:
++                defRadioButton.setChecked(true);
++                warmRadioButton.setChecked(false);
++                coldRadioButon.setChecked(false);
++                syncColor(defColor);
++                break;
++            case R.id.radiobutton_warm:
++                defRadioButton.setChecked(false);
++                warmRadioButton.setChecked(true);
++                coldRadioButon.setChecked(false);
++                syncColor(warmColor);
++                break;
++            case R.id.radiobuton_cold:
++                defRadioButton.setChecked(false);
++                warmRadioButton.setChecked(false);
++                coldRadioButon.setChecked(true);
++                syncColor(coldColor);
++                break;
++            case R.id.textView_description:
++                debugCount ++ ;
++                Log.d(TAG,"debug onclick -->"+debugCount);
++                if(debugCount == 5){
++                    DEBUG = !DEBUG;
++                    editTextDebugRGB.setVisibility(DEBUG? View.VISIBLE : View.GONE);
++                    editTextDebugHSV.setVisibility(DEBUG? View.VISIBLE : View.GONE);
++                    debugCount = 0;
++                }
++                break;
++            default:
++                //do nothing;
++                break;
++        }
++    }
++}
+diff --git a/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorView/ColorPickerView.java b/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorView/ColorPickerView.java
+new file mode 100755
+index 0000000..6bdeabf
+--- /dev/null
++++ b/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorView/ColorPickerView.java
+@@ -0,0 +1,85 @@
++package com.android.settings.display.ScreenColorView;
++
++/**
++ * Created by yunbo@wind-mobi.com on 2018/9/13.
++ */
++
++import android.content.Context;
++import android.graphics.Color;
++import android.support.annotation.Nullable;
++import android.util.AttributeSet;
++import android.util.Log;
++import android.view.Gravity;
++import android.view.MotionEvent;
++import android.view.View;
++import android.widget.LinearLayout;
++import android.view.ViewGroup;
++import android.widget.TextView;
++
++public class ColorPickerView extends LinearLayout {
++
++    private String TAG = "ColorPickerView";
++    private ColorWheelView colorWheelView;
++
++    public ColorPickerView(Context context) {
++        this(context,null);
++    }
++
++    public ColorPickerView(Context context, @Nullable AttributeSet attrs) {
++        this(context, attrs,0);
++    }
++
++    public ColorPickerView(Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
++        super(context, attrs, defStyleAttr);
++        //Log.d(TAG,"ColorPickerView");
++        setOrientation(VERTICAL);
++
++
++        colorWheelView = new ColorWheelView(context);
++
++        float density = getResources().getDisplayMetrics().density;
++        int margin = (int) (8 * density);
++
++        //加载圆盘view
++        {
++            //Log.d(TAG,"addView(colorWheelView, params);");
++            LinearLayout.LayoutParams params = new LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
++                    ViewGroup.LayoutParams.WRAP_CONTENT);
++            //params.setMargins(0,0,0,0);
++            addView(colorWheelView, params);
++        }
++
++        setGravity(Gravity.CENTER_HORIZONTAL);
++        setPadding(margin, margin, margin, margin);
++
++        colorWheelView.setOnTouchListener((View v, MotionEvent event) ->{
++
++            v.getParent().requestDisallowInterceptTouchEvent(true);
++            return false;
++
++        });
++    }
++
++    @Override
++    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
++        Log.d(TAG,"onMeasure");
++        //int maxWidth = MeasureSpec.getSize(widthMeasureSpec);
++        //int maxHeight = MeasureSpec.getSize(heightMeasureSpec);
++
++        //int desiredWidth = maxHeight - (getPaddingTop() + getPaddingBottom()) + (getPaddingLeft() + getPaddingRight());
++
++        //use static w&h , rotate pad the view won't change it's size
++        int width = 600;//Math.min(maxWidth, desiredWidth) * 2/3;
++        int height = 600;//width - (getPaddingLeft() + getPaddingRight()) + (getPaddingTop() + getPaddingBottom());
++
++
++        super.onMeasure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.getMode(widthMeasureSpec)),
++                MeasureSpec.makeMeasureSpec(height, MeasureSpec.getMode(heightMeasureSpec)));
++    }
++
++    //设置圆形色盘标点对应颜色位置
++    public void setColor(int color) {
++        colorWheelView.setColor(color);
++    }
++
++}
+diff --git a/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorView/ColorWheelView.java b/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorView/ColorWheelView.java
+new file mode 100755
+index 0000000..e8989f1
+--- /dev/null
++++ b/custom_files/packages/apps/Settings/src/com/android/settings/display/ScreenColorView/ColorWheelView.java
+@@ -0,0 +1,241 @@
++package com.android.settings.display.ScreenColorView;
++
++/**
++ * Created by yunbo@wind-mobi.com on 2018/9/13.
++ */
++
++import android.content.Context;
++import android.graphics.Canvas;
++import android.graphics.Color;
++import android.graphics.Paint;
++import android.graphics.PointF;
++import android.graphics.RadialGradient;
++import android.graphics.Shader;
++import android.graphics.SweepGradient;
++import android.support.annotation.Nullable;
++import android.util.AttributeSet;
++import android.util.Log;
++import android.view.MotionEvent;
++import android.view.View;
++
++
++import com.android.settings.display.ScreenColorManager;
++
++import java.util.Locale;
++
++public class ColorWheelView extends View{
++
++    private String TAG = "fitzColorWheelView";
++    private float radius;
++    private float wsRadius;
++    private float centerX;
++    private float centerY;
++
++    //色调减至90%
++    public static final int RED         = 0xFFFF3030;
++    public static final int MAGENTA     = 0xFFFF30FF;
++    public static final int BLUE        = 0xFF3030FF;
++    public static final int CYAN        = 0xFF30FFFF;
++    public static final int GREEN       = 0xFF30FF30;
++    public static final int YELLOW      = 0xFFFFFF30;
++    public static final int WHITE       = 0xFFFFFFFF;
++
++    private Paint huePaint;
++    private Paint saturationPaint;
++    private Paint selectorPaint;
++    private Paint pointPaint;
++    private Paint whitePaint;
++
++    private static final int SELECTOR_RADIUS_DP = 5;
++    private float selectorLinePx = SELECTOR_RADIUS_DP * 2;
++    private float selectorPx = 2;   //selector line width
++    private float selectorCirclePx = SELECTOR_RADIUS_DP * 4;
++
++    private PointF currentPoint = new PointF();
++    private int    currentColor = WHITE;   //白色
++
++
++    public ColorWheelView(Context context) {
++        this(context,null);
++    }
++
++    public ColorWheelView(Context context, @Nullable AttributeSet attrs) {
++        this(context, attrs,0);
++    }
++
++    public ColorWheelView(Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
++        super(context, attrs, defStyleAttr);
++        Log.d(TAG,"ColorWheelView");
++        huePaint = new Paint(Paint.ANTI_ALIAS_FLAG);    //抗锯齿
++        saturationPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
++        pointPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
++        whitePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
++
++        selectorPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
++        selectorPaint.setColor(Color.BLUE);
++        selectorPaint.setStyle(Paint.Style.STROKE);
++        selectorPaint.setStrokeWidth(selectorPx);
++
++        //selectorRadiusPx = SELECTOR_RADIUS_DP * getResources().getDisplayMetrics().density;
++    }
++
++    @Override
++    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
++        Log.d(TAG,"onMeasure");
++        int maxWidth = MeasureSpec.getSize(widthMeasureSpec);
++        int maxHeight = MeasureSpec.getSize(heightMeasureSpec);
++        Log.d(TAG,"maxWidth:"+maxWidth+" maxHeight:"+maxHeight);
++        int width, height;
++
++        //宽高取值需要确认
++        width = height = Math.max(maxWidth, maxHeight);
++        Log.d(TAG,"width,height:"+height);
++        setMeasuredDimension(width,height);
++    }
++
++    @Override
++    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
++        Log.d(TAG,"onSizeChanged,w:"+w+" h:"+h+" oldw:"+oldw+" oldh:"+oldh );
++        int netWidth = w - getPaddingLeft() - getPaddingRight();
++        int netHeight = h - getPaddingTop() - getPaddingBottom();
++        Log.d(TAG,"netWidth:"+netWidth+" netHeight:"+netHeight);
++        //圆盘半径，取view边长1/2 减去取色圆半径和线宽
++        radius = Math.min(netWidth, netHeight) * 0.5f - selectorCirclePx - selectorPx;
++        //中心白色圆环半径
++        wsRadius = radius * 0.9f;
++        if (radius < 0) return;
++        centerX = netWidth * 0.5f;
++        centerY = netHeight * 0.5f;
++        setColor(currentColor);
++
++        //设置hsv色盘着色器
++        //标准hsv模型，//红色，品红，蓝色，青色，绿色，黄色
++        //int[] fullColor = new int[]{Color.RED, Color.MAGENTA, Color.BLUE, Color.CYAN, Color.GREEN, Color.YELLOW,Color.RED};
++        int[] newColor = new int[]{RED,MAGENTA,BLUE,CYAN,GREEN,YELLOW,RED};
++        Shader hueShader = new SweepGradient(centerX, centerY,
++                newColor,
++                null);
++        huePaint.setShader(hueShader);
++
++        //设置全半径透明白色着色器
++        Shader saturationShader = new RadialGradient(centerX, centerY, radius,
++                Color.WHITE, 0x00FFFFFF, Shader.TileMode.CLAMP);
++        saturationPaint.setShader(saturationShader);
++
++        //设中心白色着色器
++        Shader whiteShader = new RadialGradient(centerX, centerY, wsRadius,
++                Color.WHITE, 0x00FFFFFF, Shader.TileMode.CLAMP);
++        whitePaint.setShader(whiteShader);
++
++        //设标点白色背景着色器
++        Shader pointShader = new RadialGradient(centerX, centerY, wsRadius,
++                Color.WHITE, Color.WHITE, Shader.TileMode.CLAMP);
++        pointPaint.setShader(pointShader);
++    }
++
++    @Override
++    protected void onDraw(Canvas canvas) {
++        Log.d(TAG,"onDraw");
++        //绘制色盘
++        canvas.drawCircle(centerX, centerY, radius, huePaint);
++        //绘制透明白环
++        canvas.drawCircle(centerX, centerY, radius, saturationPaint);
++        //绘制白色圆环
++        canvas.drawCircle(centerX, centerY, wsRadius, whitePaint);
++        //绘制坐标点
++        canvas.drawCircle(currentPoint.x, currentPoint.y, selectorCirclePx, pointPaint);
++        canvas.drawLine(currentPoint.x - selectorLinePx, currentPoint.y,
++                currentPoint.x + selectorLinePx, currentPoint.y, selectorPaint);
++        canvas.drawLine(currentPoint.x, currentPoint.y - selectorLinePx,
++                currentPoint.x, currentPoint.y + selectorLinePx, selectorPaint);
++        canvas.drawCircle(currentPoint.x, currentPoint.y, selectorCirclePx, selectorPaint);
++
++    }
++
++    @Override
++    public boolean onTouchEvent(MotionEvent event) {
++        int action = event.getActionMasked();
++        Log.d(TAG,"onTouchEvent,action:"+action);
++        switch (action) {
++            case MotionEvent.ACTION_DOWN:
++            case MotionEvent.ACTION_MOVE:
++                float x = event.getX();
++                float y = event.getY();
++                Log.d(TAG,"x:"+ x +"  y:"+y + " RGB:" + getColorAtPoint(x, y));
++                Log.d(TAG,"truecolor:"+colorHex(getColorAtPoint(x, y)));
++                Log.d(TAG,"screencolor:"+colorHex(getScreenColorAtPoint(x, y)));
++                updateColor(getColorAtPoint(x, y));
++                updateSelector(x, y);
++                return true;
++        }
++        return super.onTouchEvent(event);
++    }
++
++    //将颜色通知到所有观察者
++    private void updateColor(int color) {
++        Log.d(TAG,"updateColor,color:" + color);
++        ScreenColorManager.getInstance().notifyObserverColorChanged(color);
++    }
++
++    //0xFFFFE6E6
++    private int getColorAtPoint(float eventX, float eventY) {
++        float x = eventX - centerX;
++        float y = eventY - centerY;
++        double r = Math.sqrt(x * x + y * y);
++        float[] hsv = {0, 0, 1};
++        hsv[0] = (float) (Math.atan2(y, -x) / Math.PI * 180f) + 180;
++        hsv[1] = Math.max(0f, Math.min(1f, (float) (r / radius)));
++        Log.d(TAG,"hsv[0]"+hsv[0]+" hsv[1]"+hsv[1]);
++        return Color.HSVToColor(hsv);
++    }
++
++    //获取坐标颜色，将hsv颜色色调降低至10%，返回十进制
++    private int getScreenColorAtPoint(float eventX, float eventY) {
++        float x = eventX - centerX;
++        float y = eventY - centerY;
++        double r = Math.sqrt(x * x + y * y);
++        float[] hsv = {0, 0, 1};
++        hsv[0] = (float) (Math.atan2(y, -x) / Math.PI * 180f) + 180;
++        //set color to framework should *10%
++        hsv[1] = Math.max(0f, Math.min(1f, (float) (r / radius))) * 0.1f;
++        Log.d(TAG,"hsv[0]"+hsv[0]+" hsv[1]"+hsv[1]);
++        return Color.HSVToColor(hsv);
++    }
++
++    //设置当前颜色
++    public void setColor(int color) {
++        Log.d(TAG,"setcolor"+color);
++        float[] hsv = new float[3];
++        Color.colorToHSV(color, hsv);
++        float r = hsv[1] * radius;
++        float radian = (float) (hsv[0] / 180f * Math.PI);
++        updateSelector((float) (r * Math.cos(radian) + centerX), (float) (-r * Math.sin(radian) + centerY));
++        currentColor = color;
++    }
++
++    //更新标点位置
++    private void updateSelector(float eventX, float eventY) {
++        Log.d(TAG,"updateSelector");
++        float x = eventX - centerX;
++        float y = eventY - centerY;
++        double r = Math.sqrt(x * x + y * y);
++        if (r > radius) {
++            x *= radius / r;
++            y *= radius / r;
++        }
++        currentPoint.x = x + centerX;
++        currentPoint.y = y + centerY;
++        invalidate();
++    }
++
++    private String colorHex(int color) {
++        int a = Color.alpha(color); //0~255
++        int r = Color.red(color);   //0~255
++        int g = Color.green(color); //0~255
++        int b = Color.blue(color);  //0~255
++        Log.d(TAG,"colorHex,r" + r +" g:" + g + " b:" + b);
++        return String.format(Locale.getDefault(), "0x%02X%02X%02X%02X", a, r, g, b);
++    }
++
++}
++
